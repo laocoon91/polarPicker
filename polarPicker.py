@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import math as m
 
 import tensorflow as tf
+from tensorflow import keras
 from tensorflow.keras import Sequential
 from tensorflow.keras.layers import Input, Conv1D, Dense, Dropout, BatchNormalization, MaxPooling1D, Flatten, UpSampling1D
 from tensorflow.keras.models import Model
