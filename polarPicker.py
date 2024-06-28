@@ -14,6 +14,14 @@ from tensorflow.keras.models import Model
 drop_rate = 0.3
 learn_rate = 0.001
 
+def norm(X):
+    max_val = np.max(abs(X),axis=1)
+    X_norm = X.copy()
+    for i in range(X.shape[0]):
+        X_norm[i] = X_norm[i]/max_val[i]
+
+    return X_norm
+
 # -----------------------------------------------------------------------------
 # get info on cpus, gpus
 # -----------------------------------------------------------------------------

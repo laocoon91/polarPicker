@@ -8,6 +8,7 @@ from tensorflow.keras.utils import to_categorical
 class DataReader:
     def __init__(self, format="numpy", sampling_rate=100, **kwargs):
         self.buffer = {}
+        self.format = format
 
         if format == "numpy":
             self.data_dir = kwargs["data_dir"]
@@ -40,6 +41,7 @@ class DataReader_train(DataReader):
         super().__init__(format=format,**kwargs)
 
     def get_numpy_data(self):
+    #def __getitem__(self):
 
         base_name = self.data_list
 
@@ -55,6 +57,7 @@ class DataReader_train(DataReader):
             data = meta["data"]
             p_idx = meta["p_idx"]
             Xarr.append(data[p_idx-32:p_idx+32])
-            yarr.append() # need to read in polarity values somewhere 
+            #yarr.append() # need to read in polarity values somewhere 
 
-        return (np.array(Xarr), to_categorical((np.array(yarr) == 'positive').astype(int)))
+        #return (np.array(Xarr), to_categorical((np.array(yarr) == 'positive').astype(int)))
+        return (np.array(Xarr))
