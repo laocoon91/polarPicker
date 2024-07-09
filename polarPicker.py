@@ -1,4 +1,5 @@
 import os
+import sys
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -9,10 +10,44 @@ from tensorflow import keras
 from tensorflow.keras import Sequential
 from tensorflow.keras.layers import Input, Conv1D, Dense, Dropout, BatchNormalization, MaxPooling1D, Flatten, UpSampling1D
 from tensorflow.keras.models import Model
+from tensorflow.keras.utils import to_categorical
+
+from sklearn.metrics import confusion_matrix, classification_report
+from helpers import plot_classification_learning_curves, plot_confusion_matrix
 
 # set variables
 drop_rate = 0.3
 learn_rate = 0.001
+classes = ["Negative","Positive"]
+
+# -----------------------------------------------------------------------------
+# init logging
+# -----------------------------------------------------------------------------
+
+use_local_log = True
+local_log_fname = './logs/polarPicker_learning.log'
+# otherwise read output from output file with name specified in SLURM script
+
+if use_local_log: # else 
+    old_stdout = sys.stdout
+    log_file = open(local_log_fname, 'w') # can do this or use output file from SLURM
+    sys.stdout = log_file
+
+# -----------------------------------------------------------------------------
+# read in training, validating, and testing datasets
+# -----------------------------------------------------------------------------
+
+pdat = "/caldera/projects/usgs/hazards/ehp/istone/tallgrass_ml/data_dir/"
+xin = np.load(pdat+"polarity_training_timeseries.npy")
+yin = np.load(pdat+"polarity_training_polarities.npy")
+vxin = np.load(pdat+"polarity_validating_timeseries.npy")
+vy = np.load(pdat+"polarity_validating_polarities.npy")
+txin = np.load(pdat+"polarity_testing_timeseries.npy")
+ty = np.load(pdat+"polarity_testing_polarities.npy")
+
+yin = to_categorical(yin)
+vy = to_categorical(vy)
+ty = to_categorical(ty)
 
 def norm(X):
     max_val = np.max(abs(X),axis=1)
@@ -94,6 +129,7 @@ dec = decoder(enc)
 p = prob(enc)
 
 model = Model(inputs=X,outputs=[dec,p])
+#model = Model(inputs=X,outputs=p)
 
 # loss is based on dec and p, using mean squared error and huber loss, respectively.
 # dec loss is weighted 1, and p loss is weighted 200 (since we care more about p)
@@ -101,6 +137,8 @@ hub = tf.keras.losses.Huber(delta=0.5, name='huber_loss')
 
 model.compile(optimizer = keras.optimizers.Adam(learning_rate=learn_rate), \
     loss=['mse', hub], loss_weights = [1,200],metrics = ['mse','acc'])
+#model.compile(optimizer = keras.optimizers.Adam(learning_rate=learn_rate), \
+#    loss=[hub],metrics = ['mse','acc'])
 
 # -----------------------------------------------------------------------------
 # Train model
@@ -110,11 +148,30 @@ model.compile(optimizer = keras.optimizers.Adam(learning_rate=learn_rate), \
 # Stop the training early if no improvement after 15 epochs
 # Reduce the learning rate by a factor of 10 if no improvement after 10 epochs.
 early_stop = keras.callbacks.EarlyStopping(monitor='val_loss',patience=15,restore_best_weights=True)
-reduce_lr = ReduceLROnPlateau(monitor='val_loss',factor=0.1,patience=10,min_lr=1e-6)
+reduce_lr = keras.callbacks.ReduceLROnPlateau(monitor='val_loss',factor=0.1,patience=10,min_lr=1e-6)
 
 # since model loss is determined by both the decoded signal and the estimated polarity,
 # the output targets are the input xin and the polarity labels y.
-history = model.fit(xin,[xin,y],validation_data=[vxin,vy],epochs=120,callbacks=[early_stop,reduce_lr])
+history = model.fit(x=xin,y=[xin,yin],validation_data=[vxin,[vxin,vy]],epochs=10,callbacks=[early_stop,reduce_lr])
+#history = model.fit(x=xin,y=yin,validation_data=[vxin,vy],epochs=120,callbacks=[early_stop,reduce_lr])
+
+history_df = pd.DataFrame(history.history)
+history_df.to_csv('./tmp/polarPicker_learning-history.csv')
+
+print('\n# BEGIN polarPicker training history description')
+print('Training history description:')
+history_df.describe() # TO-DO not printing to log file
+print('# END polarPicker training history description')
+
+print('\n# BEGIN polarPicker training history table')
+print('Training history description:')
+with pd.option_context('display.max_rows', None,
+                       'display.max_columns', None,
+                       'display.precision', 5,
+                       ):
+    print(history_df)
+
+plot_classification_learning_curves(history_df, fig_fname='./figs/polarPicker-learning_history.png')
 
 # -----------------------------------------------------------------------------
 # Save model
@@ -128,4 +185,41 @@ model.save("polarityModel.keras")
 
 # validation data
 
-# testing data
+# --- testing dataset
+# BEGIN evaluation on testing dataset
+#test_loss, test_acc = model.evaluate(txin,[txin,ty],verbose=False)
+y_pred = model.predict(txin)
+pred_idx = np.argmax(y_pred[1], axis=1)
+
+true_idx = np.argmax(ty.astype(int),axis=1)
+
+true_lab = [classes[i] for i in true_idx]
+pred_lab = [classes[i] for i in pred_idx]
+
+# confusion matrix
+cmat = confusion_matrix(true_lab, pred_lab, labels=classes, sample_weight=None, normalize=None)
+plot_confusion_matrix(cmat, classes, fig_fname='./figs/polarPicker-conf_mat_testing.png')
+# metrics
+test_rpt = classification_report(true_lab, pred_lab)
+
+print('\n# BEGIN evaluation:testing dataset')
+print('\nEvaluation on testing dataset:')
+#print(f'\nTest dataset accuracy: {test_acc}')
+print('Confusion Matrix')
+print(cmat)
+print('Classification Report:')
+print(test_rpt)
+print('# END evaluation:testing dataset')
+
+# -----------------------------------------------------------------------------
+# finalize
+# -----------------------------------------------------------------------------
+
+# ------- set back to stdout --------------------------------------------------
+
+if use_local_log:
+    print('\nDONE!!!')
+    sys.stdout = old_stdout
+    log_file.close()
+
+print('\nDONE!!!')
