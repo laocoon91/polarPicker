@@ -2,6 +2,8 @@ import os
 import numpy as np
 import h5py
 import pandas as pd
+import obspy
+from obspy import UTCDateTime
 from tqdm import tqdm
 from tensorflow.keras.utils import to_categorical
 
@@ -18,9 +20,18 @@ class DataReader:
                 csv = pd.read_csv(kwargs["data_list"], header=0, sep="\t")
             self.data_list = csv["fname"]
             self.num_data = len(self.data_list)
-        elif format == "hdf5":
-            self.h5 = h5py.File(kwargs["hdf5_file"], "r", libver="latest")
-            self.h5_data
+        #elif format == "hdf5":
+        #    self.h5 = h5py.File(kwargs["hdf5_file"], "r", libver="latest")
+        #    self.h5_data
+        elif format == "mseed":
+            self.data_dir = kwargs["data_dir"]
+            try:
+                csv = pd.read_csv(kwargs["data_list"], header=0,sep="[,|\s+]", engine="python")
+            except:
+                csv = pd.read_csv(kwargs["data_list"], header=0)
+            self.evids = csv["evid"]
+            self.stas = csv["sta"]
+            self.tphases = csv["UTCDateTime"]
         else:
             raise (f"{format} not supported")
     
@@ -31,6 +42,27 @@ class DataReader:
             meta = {}
             meta["data"] = npz["data"][:,2] # Z-comp
             meta["p_idx"] = npz["p_idx"]
+        else:
+            meta = self.buffer[fname]
+
+        return meta
+    
+    def read_mseed(self,fname,tphase):
+
+        if fname not in self.buffer:
+            meta = {}
+            msd = obspy.read(fname)
+            if len(msd)<3:
+                meta["inrange"] = False
+                return meta
+            meta["data"] = msd[2].data
+            p_cnt = int((UTCDateTime(tphase) - UTCDateTime(msd[2].stats.starttime))/msd[2].stats.delta)
+            if p_cnt > msd[2].stats.npts:
+                #raise ValueError(f"Calculated phase index for {fname} is greater than record length")
+                meta["inrange"] = False
+            else:
+                meta["inrange"] = True
+            meta["p_idx"] = p_cnt
         else:
             meta = self.buffer[fname]
 
@@ -61,3 +93,71 @@ class DataReader_train(DataReader):
 
         #return (np.array(Xarr), to_categorical((np.array(yarr) == 'positive').astype(int)))
         return (np.array(Xarr))
+    
+    def get_mseed_data(self):
+
+        evids = self.evids
+        stas = self.stas
+        tphases = self.tphases
+
+        rec_list = []
+        Xarr = []
+
+        pbar = tqdm(total=len(evids))
+
+        for i in range(len(evids)):
+            pbar.update()
+            rec = evids[i] + "_" + stas[i] + ".mseed"
+            if os.path.isfile(os.path.join(self.data_dir,rec)):
+                tphase = tphases[i]
+                if self.format == "mseed":
+                    meta = self.read_mseed(os.path.join(self.data_dir,rec),tphase)
+                if meta["inrange"] == False:
+                   continue
+                data = meta["data"]
+                p_idx = meta["p_idx"]
+                if(len(data[p_idx-32:p_idx+32])<64):
+                   continue
+                rec_list.append(rec)
+                Xarr.append(data[p_idx-32:p_idx+32])
+                
+        
+        return(np.array(Xarr),rec_list)
+    
+    def calc_mseed_SNR(self):
+        evids = self.evids
+        stas = self.stas
+        tphases = self.tphases
+
+        SNR_arr = []
+
+        pbar = tqdm(total=len(evids))
+
+        for i in range(len(evids)):
+            pbar.update()
+            rec = evids[i] + "_" + stas[i] + ".mseed"
+            # employs the same discrimination metric as get_mseed_data()
+            if os.path.isfile(os.path.join(self.data_dir,rec)):
+                tphase = tphases[i]
+                if self.format == "mseed":
+                    meta = self.read_mseed(os.path.join(self.data_dir,rec),tphase)
+                if meta["inrange"] == False:
+                   continue
+                data = meta["data"]
+                p_idx = meta["p_idx"]
+                if(len(data[p_idx-32:p_idx+32])<64):
+                   continue
+                signal = data[p_idx:p_idx+100]
+                noise = data[p_idx-200:p_idx]
+                if((len(signal)<100)|(len(noise)<200)):
+                    SNR = 0.5
+                else:
+                    signal -= np.arange(len(signal))/len(signal)*(signal[-1]-signal[0])/1.+signal[0]
+                    noise -= np.arange(len(noise))/len(noise)*(noise[-1]-noise[0])/2.+noise[0]
+                    signal_std = np.std(signal)
+                    noise_std = np.std(noise)
+                    SNR = signal_std/noise_std
+                SNR_arr.append(SNR)
+
+        return(np.array(SNR_arr))
+
