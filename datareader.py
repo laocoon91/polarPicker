@@ -4,6 +4,7 @@ import h5py
 import pandas as pd
 import obspy
 from obspy import UTCDateTime
+from scipy import signal as s
 from tqdm import tqdm
 from tensorflow.keras.utils import to_categorical
 
@@ -11,6 +12,7 @@ class DataReader:
     def __init__(self, format="numpy", sampling_rate=100, **kwargs):
         self.buffer = {}
         self.format = format
+        self.sampling_rate = sampling_rate
 
         if format == "numpy":
             self.data_dir = kwargs["data_dir"]
@@ -100,8 +102,10 @@ class DataReader_train(DataReader):
         stas = self.stas
         tphases = self.tphases
 
-        rec_list = []
-        Xarr = []
+        rec_list = np.zeros(len(evids),dtype='<U50')
+        Xarr = np.zeros((len(evids),64))
+        SNRarr = np.zeros(len(evids))
+        rec_bool = np.zeros(len(evids),dtype=bool)
 
         pbar = tqdm(total=len(evids))
 
@@ -118,12 +122,75 @@ class DataReader_train(DataReader):
                 p_idx = meta["p_idx"]
                 if(len(data[p_idx-32:p_idx+32])<64):
                    continue
+                signal = data[p_idx:p_idx+25].copy()
+                noise = data[p_idx-50:p_idx].copy()
+                if(np.max(signal)-np.min(signal)==0.):
+                    continue
+                if((len(signal)<25)|(len(noise)<50)):
+                    SNR = 0.1
+                else:
+                    signal -= np.arange(len(signal))/len(signal)*(signal[-1]-signal[0])/0.25+signal[0]
+                    noise -= np.arange(len(noise))/len(noise)*(noise[-1]-noise[0])/0.5+noise[0]
+                    signal_std = np.std(signal)
+                    noise_std = np.std(noise)
+                    SNR = signal_std/noise_std
+                SNRarr[i] = SNR
+                rec_list[i] = rec
+                Xarr[i] = data[p_idx-32:p_idx+32]
+                rec_bool = True
+                
+        Xarr = Xarr[rec_bool,:]
+        rec_list = rec_list[rec_bool]
+        SNRarr = SNRarr[rec_bool]
+        
+        return(Xarr,list(rec_list),SNRarr)
+    
+    def get_mseed_data_filtered(self,fmin,fmax):
+
+        dt = self.sampling_rate
+        evids = self.evids
+        stas = self.stas
+        tphases = self.tphases
+
+        rec_list = []
+        Xarr = []
+        SNRarr = []
+
+        sost = s.butter(2,[fmin,fmax],'bandpass',fs=dt,output='sos')
+
+        pbar = tqdm(total=len(evids))
+
+        for i in range(len(evids)):
+            pbar.update()
+            rec = evids[i] + "_" + stas[i] + ".mseed"
+            if os.path.isfile(os.path.join(self.data_dir,rec)):
+                tphase = tphases[i]
+                if self.format == "mseed":
+                    meta = self.read_mseed(os.path.join(self.data_dir,rec),tphase)
+                if meta["inrange"] == False:
+                   continue
+                data = meta["data"]
+                p_idx = meta["p_idx"]
+                if(len(data[p_idx-32:p_idx+32])<64):
+                   continue
+                data = s.sosfiltfilt(sost,data)
+                signal = data[p_idx:p_idx+100].copy()
+                noise = data[p_idx-200:p_idx].copy()
+                if((len(signal)<100)|(len(noise)<200)):
+                    SNR = 0.5
+                else:
+                    signal -= np.arange(len(signal))/len(signal)*(signal[-1]-signal[0])/1.+signal[0]
+                    noise -= np.arange(len(noise))/len(noise)*(noise[-1]-noise[0])/2.+noise[0]
+                    signal_std = np.std(signal)
+                    noise_std = np.std(noise)
+                    SNR = signal_std/noise_std
+                SNRarr.append(SNR)
                 rec_list.append(rec)
                 Xarr.append(data[p_idx-32:p_idx+32])
-                
-        
-        return(np.array(Xarr),rec_list)
-    
+
+
+        return(np.array(Xarr),rec_list,np.array(SNRarr))
+
     def calc_mseed_SNR(self):
         evids = self.evids
         stas = self.stas
