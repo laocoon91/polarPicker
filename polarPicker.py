@@ -19,6 +19,7 @@ from helpers import plot_classification_learning_curves, plot_confusion_matrix
 drop_rate = 0.3
 learn_rate = 0.001
 classes = ["Negative","Positive"]
+#classes = ["Negative","Positive","Undecided"]
 
 # -----------------------------------------------------------------------------
 # init logging
@@ -38,12 +39,12 @@ if use_local_log: # else
 # -----------------------------------------------------------------------------
 
 pdat = "/caldera/projects/usgs/hazards/ehp/istone/tallgrass_ml/data_dir/"
-xin = np.load(pdat+"polarity_training_timeseries.npy")
-yin = np.load(pdat+"polarity_training_polarities.npy")
-vxin = np.load(pdat+"polarity_validating_timeseries.npy")
-vy = np.load(pdat+"polarity_validating_polarities.npy")
-txin = np.load(pdat+"polarity_testing_timeseries.npy")
-ty = np.load(pdat+"polarity_testing_polarities.npy")
+xin = np.load(pdat+"polarity_training_timeseries_undecided.npy")
+yin = np.load(pdat+"polarity_training_polarities_undecided.npy")
+vxin = np.load(pdat+"polarity_validating_timeseries_undecided.npy")
+vy = np.load(pdat+"polarity_validating_polarities_undecided.npy")
+txin = np.load(pdat+"polarity_testing_timeseries_undecided.npy")
+ty = np.load(pdat+"polarity_testing_polarities_undecided.npy")
 
 yin = to_categorical(yin)
 vy = to_categorical(vy)
@@ -111,6 +112,7 @@ def build_polarPicker(drop_rate=drop_rate):
     prob.add(Input(shape = (16,8)))
     prob.add(Flatten())
     prob.add(Dense(2, activation = 'softmax'))
+#    prob.add(Dense(3, activation = 'softmax'))
 
     return encoder,decoder,prob
 
@@ -152,7 +154,7 @@ reduce_lr = keras.callbacks.ReduceLROnPlateau(monitor='val_loss',factor=0.1,pati
 
 # since model loss is determined by both the decoded signal and the estimated polarity,
 # the output targets are the input xin and the polarity labels y.
-history = model.fit(x=xin,y=[xin,yin],validation_data=[vxin,[vxin,vy]],epochs=10,callbacks=[early_stop,reduce_lr])
+history = model.fit(x=xin,y=[xin,yin],validation_data=[vxin,[vxin,vy]],epochs=120,callbacks=[early_stop,reduce_lr])
 #history = model.fit(x=xin,y=yin,validation_data=[vxin,vy],epochs=120,callbacks=[early_stop,reduce_lr])
 
 history_df = pd.DataFrame(history.history)
